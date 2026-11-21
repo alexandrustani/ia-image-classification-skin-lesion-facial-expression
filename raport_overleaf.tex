@@ -1,0 +1,263 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[romanian]{babel}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+\title{Tema 2 - Clasificarea imaginilor cu MLP, CNN si fine-tuning pe retele preantrenate}
+\author{Stanislav Alex}
+\date{}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introducere}
+
+Aceasta tema are ca scop utilizarea modelelor neurale pentru clasificarea imaginilor, iar acest lucru consta in familiarizarea cu conceptele de baza ale antrenarii retelelor neurale. Tema urmareste un obiectiv principal: rezolvarea unei probleme de clasificare pe baza unor seturi de date complet diferite, unul pentru expresii faciale si unul pentru alunite.
+
+Am urmarit sa construiesc si sa compar mai multe familii de modele, pornind de la arhitecturi MLP simple si extinse, continuand cu mai multe variante de CNN proiectate manual si incheind cu fine-tuning pe o retea preantrenata. In toate experimentele am urmarit aceleasi idei principale: alegerea unei arhitecturi potrivite pentru date, folosirea unor tehnici de regularizare pentru a controla overfitting-ul si analiza curbelor de train si validation pentru a observa cum generalizeaza modelul.
+
+\section{Augmentarea imaginilor}
+
+\subsection{Setul de date cu fete}
+
+Pentru augmentarea setului de imagini cu expresii faciale am incercat mai multe metode, insa cea mai buna varianta pentru CNN s-a dovedit a fi augmentarea geometrica. Aceasta a inclus \texttt{Resize} la o dimensiune usor mai mare, urmat de \texttt{RandomCrop}, \texttt{RandomHorizontalFlip} si \texttt{RandomRotation}. Motivul pentru care aceasta alegere a fost potrivita este faptul ca expresia fetei se pastreaza, dar modelul vede aceeasi clasa in ipostaze usor diferite.
+
+RandomCrop dupa un resize mai mare simuleaza mici erori de centrare ale fetei, \texttt{RandomHorizontalFlip} este util deoarece expresiile sunt in mare parte simetrice semantic, iar \texttt{RandomRotation(15)} creste robustetea la inclinari naturale ale capului. Asa cum se poate observa si din exemplele de augmentare, fizionomia fetei nu este modificata in mod semnificativ, ci doar pozitia si orientarea.
+
+\subsection{Setul de date cu alunite}
+
+Pentru setul de imagini cu alunite am aplicat aceeasi idee de a testa mai multe tipuri de augmentare, insa aici cea mai buna varianta a fost augmentarea de culoare. Practic, modelul vede aceleasi imagini, dar in conditii usor diferite de iluminare si contrast. Aceasta alegere este rezonabila deoarece, pentru alunite, variatiile de lumina si de ton sunt mai frecvente in practica decat transformari geometrice puternice.
+
+Prin urmare, pentru fete am pastrat augmentarea geometrica in experimentele ulterioare, iar pentru alunite am pastrat augmentarea de culoare.
+
+\section{MLP}
+
+\subsection{Fete}
+
+Aici am aplicat diferite structuri de MLP-uri pentru a observa care este cel mai bun model. De asemenea, am facut mai multe experimente pe \texttt{learning rate} si \texttt{weight decay}. Printre experimente s-a numarat si structura simpla de MLP prezentata in enuntul temei, iar ulterior am adaugat \texttt{BatchNorm}, inca un strat liniar si am alternat functiile de activare, folosind atat \texttt{GELU}, cat si \texttt{LeakyReLU}.
+
+Pe setul de date cu fete, cel mai bun MLP a fost \texttt{GELU\_Activations}, cu un scor maxim de \texttt{F1-macro = 0.5671}. Arhitectura folosita a fost una fully-connected, cu \texttt{Flatten} la intrare, urmat de trei straturi liniare:
+\[
+3 \cdot \texttt{img\_size} \cdot \texttt{img\_size} \rightarrow 1024 \rightarrow 512 \rightarrow 256 \rightarrow 7.
+\]
+Dupa primele doua straturi liniare am folosit \texttt{BatchNorm1d}, activare \texttt{GELU} si \texttt{Dropout}, iar pe ultimul strat ascuns am pastrat \texttt{BatchNorm1d} si \texttt{GELU} fara dropout. Valorile de dropout au fost \texttt{0.4} dupa primul strat ascuns si \texttt{0.3} dupa al doilea. Modelul a fost antrenat \texttt{20} epoci, cu optimizator \texttt{Adam}, \texttt{learning rate = 1e-4}, \texttt{weight\_decay = 1e-4} si \texttt{CrossEntropyLoss}.
+
+Graficele de train si validation sustin aceeasi concluzie. Curba de \texttt{train loss} scade constant, ceea ce arata ca modelul invata corect pe datele de antrenare. Curba de \texttt{validation loss} scade in primele epoci, apoi fluctueaza usor spre final, semn ca apare un overfitting usor, nu unul sever. La acuratete se observa acelasi comportament: \texttt{train accuracy} continua sa creasca, in timp ce \texttt{validation accuracy} se stabilizeaza in a doua jumatate a antrenarii.
+
+\subsection{Alunite}
+
+Pentru setul de date cu alunite am urmat acelasi procedeu. Mai intai am ales valorile pentru \texttt{learning rate} si \texttt{weight decay}, iar apoi am rulat aceleasi modele testate si pe setul de fete. Rezultatul a fost diferit: aici cel mai bun model a fost \texttt{LeakyReLU MLP}, cu \texttt{F1-macro = 0.4451}.
+
+Arhitectura a fost:
+\[
+3 \cdot \texttt{img\_size} \cdot \texttt{img\_size} \rightarrow 1024 \rightarrow 512 \rightarrow 256 \rightarrow 7,
+\]
+cu \texttt{Flatten}, doua blocuri \texttt{Linear + BatchNorm1d + LeakyReLU(0.1) + Dropout} si un ultim strat ascuns \texttt{Linear + BatchNorm1d + LeakyReLU(0.1)}. Valorile de dropout au fost \texttt{0.4} si \texttt{0.3}. Modelul a fost antrenat \texttt{20} epoci, cu \texttt{Adam}, \texttt{learning rate = 1e-3}, \texttt{weight\_decay = 1e-5} si \texttt{CrossEntropyLoss}.
+
+Curbele de train si validation arata ca modelul invata corect, deci nu este underfitting. In schimb, spre final apare un overfitting usor: \texttt{train accuracy} continua sa creasca pana aproape de \texttt{0.789}, in timp ce \texttt{validation accuracy} se stabilizeaza in jurul valorii \texttt{0.739}, iar \texttt{validation loss} incepe sa fluctueze.
+
+\subsection{Experimente cu FocalLoss si Weighted Sampler}
+
+Pentru MLP-ul cu \texttt{GELU} pe fete si pentru MLP-ul cu \texttt{LeakyReLU} pe alunite am facut si experimente suplimentare pentru tratarea dezechilibrului claselor, folosind \texttt{FocalLoss} si \texttt{WeightedSampler}.
+
+Pentru \texttt{GELU} cu \texttt{FocalLoss}, desi in sine rezolva dezechilibrul claselor, este normal ca acuratetea sa scada, dar totusi graficele au inceput usor usor sa se suprapuna. In schimb, scorul \texttt{F1} a scazut fata de rezultatele modelului initial.
+
+Pentru \texttt{GELU} cu \texttt{WeightedSampler}, din grafice si din matricea de confuzie se poate observa ca acest criteriu nu influenteaza destul de mult acuratetea sau graficele fata de \texttt{CrossEntropy} normal. Insa scade scorul \texttt{F1} de prezicere.
+
+La \texttt{LeakyReLU} se observa in mare aceeasi tendinta. Desi cele doua tehnici urmaresc sa corecteze dezechilibrul claselor, corectia poate deveni prea puternica si poate destabiliza antrenarea. \texttt{WeightedSampler} modifica distributia batch-urilor fata de distributia reala a datelor, iar \texttt{FocalLoss} pune accent mai mare pe exemplele greu de clasificat. In acest caz, efectul final a fost o generalizare mai slaba si un scor \texttt{F1} mai redus fata de varianta standard.
+
+\section{CNN}
+
+\subsection{Motivatie generala}
+
+Pentru partea de CNN nu am folosit o singura arhitectura, ci mai multe modele diferite, cu adancimi si blocuri diferite, pentru a observa ce combinatie de straturi convolutionale, normalizare, pooling si regularizare functioneaza cel mai bine pe fiecare set de date. Ideea a fost sa pornesc de la un model simplu si sa cresc treptat capacitatea modelului prin adaugarea de straturi convoluționale, \texttt{BatchNormalization}, activari diferite, \texttt{Global Average Pooling} si \texttt{Dropout}.
+
+Modelele testate au fost:
+\begin{itemize}
+    \item \texttt{SimpleCNN}, o varianta de baza cu trei straturi convolutionale si \texttt{AdaptiveAvgPool2d};
+    \item \texttt{CNNWithBatchNorm}, care adauga \texttt{BatchNormalization} peste varianta simpla;
+    \item \texttt{VGGLiteCNN}, o varianta mai adanca, cu patru straturi convolutionale, \texttt{BatchNormalization}, \texttt{ReLU}, \texttt{MaxPooling}, \texttt{Global Average Pooling} si \texttt{Dropout};
+    \item \texttt{ReceptiveEnhancerCNN}, un model care foloseste blocuri convolutionale succesive si activare \texttt{LeakyReLU};
+    \item \texttt{WideShallowCNN}, un model mai lat si mai putin adanc, cu activare \texttt{GELU};
+    \item \texttt{MaxCapacityCNN}, cea mai complexa varianta dintre modelele proiectate manual, cu patru straturi convolutionale, doua straturi liniare in clasificator, \texttt{BatchNormalization}, \texttt{LeakyReLU}, \texttt{MaxPooling}, \texttt{Global Average Pooling} si \texttt{Dropout}.
+\end{itemize}
+
+\subsection{Rezultate CNN fara augmentare}
+
+Am evaluat toate aceste arhitecturi pe ambele seturi de date, folosind aceeasi procedura de antrenare pentru comparatie. Pe fete, cel mai bun model a fost \texttt{MaxCapacityCNN}, iar pe alunite cel mai bun model a fost \texttt{VGGLiteCNN}.
+
+\begin{table}[H]
+\centering
+\caption{Comparatie intre arhitecturile CNN pe setul de date cu fete}
+\begin{tabular}{lc}
+\toprule
+Model & F1-macro maxim \\
+\midrule
+MaxCapacity\_Fete & 0.4407 \\
+VGGLite\_Fete & 0.4366 \\
+WideShallow\_Fete & 0.2905 \\
+BatchNormCNN\_Fete & 0.1987 \\
+Enhancer\_Fete & 0.1693 \\
+SimpleCNN\_Fete & 0.1371 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Comparatie intre arhitecturile CNN pe setul de date cu alunite}
+\begin{tabular}{lc}
+\toprule
+Model & F1-macro maxim \\
+\midrule
+VGGLite\_Alunite & 0.4747 \\
+MaxCapacity\_Alunite & 0.4459 \\
+WideShallow\_Alunite & 0.4387 \\
+BatchNormCNN\_Alunite & 0.4255 \\
+Enhancer\_Alunite & 0.3632 \\
+SimpleCNN\_Alunite & 0.3239 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Arhitectura aleasa pentru fete: MaxCapacityCNN}
+
+Pe setul de date cu fete, modelul cel mai bun a fost \texttt{MaxCapacityCNN}. Acesta foloseste patru straturi convolutionale:
+\[
+3 \rightarrow 64 \rightarrow 128 \rightarrow 256 \rightarrow 512,
+\]
+toate cu kernel principal de dimensiune \texttt{3} si padding ales astfel incat informatia spatiala sa fie pastrata inainte de operatiile de pooling. Dupa fiecare strat convoluțional am folosit \texttt{BatchNormalization} si activare \texttt{LeakyReLU(0.1)}. Pentru reducerea rezolutiei am folosit \texttt{MaxPooling} dupa primele trei blocuri, iar la final \texttt{AdaptiveAvgPool2d((1,1))}, adica global average pooling.
+
+Clasificatorul este format din \texttt{Dropout(0.5)}, apoi un strat liniar \texttt{512 \rightarrow 128}, urmat de \texttt{BatchNorm1d}, activare \texttt{LeakyReLU(0.1)}, apoi \texttt{Dropout(0.3)} si stratul final \texttt{128 \rightarrow 7}. Aceasta structura a fost eficienta deoarece combina o capacitate mai mare de extragere a trasaturilor cu regularizare destul de puternica, ceea ce ajuta pentru un set de date mai dificil cum este cel al expresiilor faciale.
+
+\subsection{Arhitectura aleasa pentru alunite: VGGLiteCNN}
+
+Pe setul de date cu alunite, modelul cel mai bun a fost \texttt{VGGLiteCNN}. Acesta are patru straturi convolutionale:
+\[
+3 \rightarrow 32 \rightarrow 64 \rightarrow 128 \rightarrow 256,
+\]
+cu un prim kernel de dimensiune \texttt{5}, pentru a capta un context spatial mai larg inca din prima etapa, si apoi kernel-uri de \texttt{3x3}. Dupa fiecare strat convoluțional am folosit \texttt{BatchNormalization} si activare \texttt{ReLU}. Intre blocuri am folosit \texttt{MaxPooling}, iar la final \texttt{AdaptiveAvgPool2d((1,1))}.
+
+Clasificatorul final este simplu: \texttt{Dropout(0.5)} urmat de un strat liniar \texttt{256 \rightarrow 7}. Aceasta alegere a fost potrivita deoarece modelul reuseste sa extraga reprezentari suficient de bune fara a deveni excesiv de complex. Pentru imaginile cu alunite, aceasta combinatie de profunzime moderata, \texttt{BatchNormalization} si \texttt{Dropout} a oferit cel mai bun echilibru intre invatare si generalizare.
+
+\subsection{Impactul augmentarii pe cele mai bune CNN-uri}
+
+Dupa alegerea celor mai bune modele fara augmentare, am testat si impactul augmentarii imaginilor pe aceste arhitecturi. Pentru fete am folosit \texttt{MaxCapacityCNN}, iar pentru alunite am folosit \texttt{VGGLiteCNN}.
+
+Pe fete, augmentarea geometrica a oferit cele mai bune rezultate:
+\begin{itemize}
+    \item \texttt{MaxCapacityCNN + GEO}: \texttt{F1-macro = 0.5710}
+    \item \texttt{MaxCapacityCNN + COLOR}: \texttt{F1-macro = 0.4687}
+    \item \texttt{MaxCapacityCNN + ALL}: \texttt{F1-macro = 0.4149}
+\end{itemize}
+
+Acest lucru confirma observatia initiala: pentru expresii faciale, transformarile geometrice ajuta mai mult decat cele de culoare, deoarece pastreaza clasa, dar cresc variatia de pozitie si orientare. Din grafice se poate observa ca modelul cu augmentare geometrica invata mai robust si generalizeaza mai bine, chiar daca exista usoare fluctuatii pe validation. Curbele nu mai arata o memorare rapida a setului de train, ci o invatare mai stabila.
+
+Pe alunite, augmentarea de culoare a fost cea mai buna:
+\begin{itemize}
+    \item \texttt{VGGLiteCNN + COLOR}: \texttt{F1-macro = 0.4632}
+    \item \texttt{VGGLiteCNN + ALL}: \texttt{F1-macro = 0.4625}
+    \item \texttt{VGGLiteCNN + GEO}: \texttt{F1-macro = 0.4505}
+\end{itemize}
+
+Observatia importanta este ca augmentarea de culoare si combinatia completa sunt foarte apropiate, insa varianta \texttt{COLOR} ramane cea mai buna. Din grafice se poate observa ca aceasta augmentare ajuta modelul sa fie mai robust la variatii de iluminare si contrast, fara sa modifice foarte tare structura vizuala relevanta pentru clasa.
+
+\subsection{Grafice si matrici de confuzie}
+
+Pentru fiecare model final am inclus graficele curbelor de \texttt{train loss}, \texttt{validation loss}, \texttt{train accuracy} si \texttt{validation accuracy}, precum si matricele de confuzie. Acestea sunt importante deoarece nu arata doar scorul final, ci si modul in care invata modelul in timp.
+
+Pe modelele cele mai bune, se observa in general acelasi tipar:
+\begin{itemize}
+    \item \texttt{train loss} scade constant, ceea ce arata ca modelul invata corect;
+    \item \texttt{validation loss} scade in prima parte a antrenarii si apoi poate fluctua usor;
+    \item \texttt{train accuracy} continua sa creasca;
+    \item \texttt{validation accuracy} se stabilizeaza in jurul unui maxim.
+\end{itemize}
+
+Acest comportament sugereaza in general o invatare buna, cu un overfitting usor spre final, dar controlat prin \texttt{BatchNormalization}, \texttt{Global Average Pooling} si \texttt{Dropout}.
+
+\section{Fine-tuning pe retea preantrenata}
+
+\subsection{Procedura folosita}
+
+Pentru partea de fine-tuning am folosit o retea \texttt{ResNet-18} preantrenata. Am evaluat doua variante:
+\begin{itemize}
+    \item \textbf{fara warmup}: modelul este deblocat si fine-tuned direct;
+    \item \textbf{cu warmup}: backbone-ul este initial inghetat, se antreneaza doar head-ul pentru cateva epoci, iar apoi se deblocheaza toate straturile si se continua fine-tuning-ul complet.
+\end{itemize}
+
+In implementare, varianta cu warmup a fost una \textit{two-stage}. In prima etapa se antreneaza doar capul de clasificare pentru \texttt{5} epoci, cu backbone-ul inghetat. In a doua etapa se deblocheaza intreaga retea si se continua antrenarea pana la \texttt{45} de epoci totale. In ambele cazuri s-a folosit un scheduler de tip \texttt{CosineAnnealingLR}. Pentru fete s-a folosit \texttt{CrossEntropyLoss}, iar pentru alunite s-a folosit \texttt{Weighted CrossEntropy}, tinand cont de dezechilibrul claselor.
+
+Transformarile de date pentru fine-tuning au fost si ele adaptate:
+\begin{itemize}
+    \item pentru fete: \texttt{Resize}, \texttt{RandomHorizontalFlip}, \texttt{RandomRotation}, \texttt{RandomAffine}, \texttt{ColorJitter};
+    \item pentru alunite: \texttt{PadToSquare}, \texttt{Resize}, \texttt{RandomCrop}, \texttt{RandomHorizontalFlip}, \texttt{RandomVerticalFlip}, \texttt{RandomRotation}, \texttt{ColorJitter}.
+\end{itemize}
+
+\subsection{Ablatie cu/fara learning rate warmup}
+
+Prin aceasta ablatie am urmarit sa observ daca strategia de warmup face antrenarea mai stabila si daca duce la rezultate finale mai bune fata de varianta de fine-tuning direct. Ideea este ca, atunci cand backbone-ul este preantrenat, o actualizare agresiva de la inceput poate perturba prea repede trasaturile deja invatate. Varianta cu warmup incearca sa evite acest lucru, lasand mai intai head-ul sa se adapteze la noua problema.
+
+In raportul final trebuie incluse:
+\begin{itemize}
+    \item graficele \texttt{train/validation loss} si \texttt{train/validation accuracy} pentru varianta fara warmup;
+    \item graficele echivalente pentru varianta cu warmup;
+    \item un tabel comparativ cu cel mai bun \texttt{epoch}, \texttt{accuracy} si \texttt{F1-macro} pentru fiecare varianta.
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\caption{Comparatie fine-tuning ResNet-18 cu si fara warmup}
+\begin{tabular}{lcccc}
+\toprule
+Set de date & Varianta & Best epoch & Accuracy & F1-macro \\
+\midrule
+Fete & Fara warmup & \texttt{[de completat]} & \texttt{[de completat]} & \texttt{[de completat]} \\
+Fete & Cu warmup & \texttt{[de completat]} & \texttt{[de completat]} & \texttt{[de completat]} \\
+Alunite & Fara warmup & \texttt{[de completat]} & \texttt{[de completat]} & \texttt{[de completat]} \\
+Alunite & Cu warmup & \texttt{[de completat]} & \texttt{[de completat]} & \texttt{[de completat]} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Interpretarea pe care o poti pastra in raport este urmatoarea: daca varianta cu warmup are curbe mai stabile si un scor mai bun, atunci warmup-ul a ajutat modelul sa se adapteze mai gradual la noua problema. Daca diferentele sunt mici, atunci se poate spune ca reteaua preantrenata era deja suficient de stabila, iar beneficiul warmup-ului a fost limitat. In ambele situatii, graficele sunt importante pentru ca arata nu doar scorul final, ci si dinamica antrenarii.
+
+\section{Concluzii}
+
+In aceasta tema am comparat mai multe tipuri de modele pe doua seturi de date diferite, unul pentru expresii faciale si unul pentru alunite. Pentru MLP, cel mai bun model pe fete a fost varianta cu activare \texttt{GELU}, iar pe alunite cea cu \texttt{LeakyReLU}. Pentru CNN, modelul cel mai bun pe fete a fost \texttt{MaxCapacityCNN}, iar pe alunite \texttt{VGGLiteCNN}. De asemenea, augmentarea geometrica a fost mai potrivita pentru fete, iar augmentarea de culoare pentru alunite.
+
+Partea de fine-tuning pe \texttt{ResNet-18} extinde aceasta analiza spre o familie de modele mai puternice, bazate pe trasaturi preantrenate. Astfel, raportul surprinde atat comparatia intre arhitecturi proiectate manual, cat si efectul unor tehnici mai avansate precum augmentarea, regularizarea si warmup-ul in fine-tuning.
+
+\section*{Anexa practica pentru Overleaf}
+
+Inlocuieste in proiectul Overleaf figurile cu numele fisierelor tale exportate din notebook, de exemplu:
+\begin{itemize}
+    \item \texttt{figuri/mlp\_fete\_gelu\_curbe.png}
+    \item \texttt{figuri/mlp\_alunite\_leakyrelu\_curbe.png}
+    \item \texttt{figuri/cnn\_fete\_maxcapacity\_geo\_curbe.png}
+    \item \texttt{figuri/cnn\_alunite\_vgglite\_color\_curbe.png}
+    \item \texttt{figuri/resnet18\_fete\_warmup.png}
+    \item \texttt{figuri/resnet18\_alunite\_warmup.png}
+\end{itemize}
+
+\end{document}
